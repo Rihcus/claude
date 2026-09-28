@@ -115,16 +115,21 @@ Levers, in order of usefulness:
 1. **Lower `Max intrabars per chart bar`.** This climbs the ladder to a coarser
    rung, which covers far more history. The tradeoff on a 4h chart:
 
-   | Cap | Rung | Intrabars/bar | Coverage |
+   | Cap range | Rung | Intrabars/bar | Coverage |
    |---|---|---|---|
-   | 600 | 1m  | ~218 | ~460 bars (~3.5 months) |
-   | 200 | 5m  | 48   | ~2,080 bars (~1 year) |
-   | 60  | 15m | 16   | ~6,250 bars (~2.8 years) |
-   | 20  | 1h  | 4    | beyond most chart history |
+   | ≥ 240  | 1m  | 240 (~218 on NQ) | ~460 bars (~3.5 months) |
+   | 48–239 | 5m  | 48 (~46)  | ~2,170 bars (~1.4 years) |
+   | 16–47  | 15m | 16        | ~6,250 bars (~2.8 years) |
+   | 4–15   | 1h  | 4         | beyond most chart history |
 
-   16 samples per bar is a far better estimate than the 1 you get from bar-level
-   fallback, so on a multi-year 4h chart a cap of 60 buys real reconstruction
-   across the whole visible range.
+   The rung flips at the cap value where `chartTF / rung` stops fitting, so cap 60
+   still selects 5m (48 ≤ 60), not 15m — you need cap 47 or lower for that. 4h
+   itself is never a candidate, since a rung must be strictly below the chart
+   timeframe.
+
+   Fewer intrabars per bar is not simply worse: a uniform coarse rung across the
+   whole chart is often more useful than a fine rung spliced onto a coarse one,
+   because amplitude is only comparable within a regime.
 2. **Uncheck `Blank out bars with no intrabar data`.** Older bars then plot from
    the coarser fallback rung, or from the bar-level proportional estimate, shaded
    orange so you can see it is an estimate. It no longer pins at ±1.
@@ -170,8 +175,11 @@ intrabars/bar), which covers only ~410 bars ≈ 10 weeks — barely two `Month`
 periods. Dropping the cap to 200 moves it to the 5m rung (48/bar, ~2,000 bars ≈ a
 year) if you need a longer anchor to be usable.
 
-When rolling, a window containing any bar without intrabar data is treated as
-untrusted in full, not just the missing bars — a partial window would understate
+When rolling, a window that spans a rung change is shaded purple: for those
+`rollLen` bars the sum mixes two delta scales. (`Reset cumulation when the
+intrabar source changes` only affects the calendar-anchored path, since a rolling
+sum has no reset to move.) A window containing any bar without intrabar data is
+likewise treated as untrusted in full, not just the missing bars — a partial window would understate
 volume and inflate the ratio.
 
 If you switch `Blank out bars with no intrabar data` off to see history past the
