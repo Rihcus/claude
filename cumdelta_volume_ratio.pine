@@ -195,6 +195,13 @@ if srcCode == 2
 float rollD = math.sum(barDelta, rollLen)
 float rollV = math.sum(barVol, rollLen)
 float rollN = math.sum(nIntra, rollLen)
+float barMs   = nz(time - time[1], 0)
+float rollMs  = math.sum(barMs, rollLen)
+var float perMs = 0.0
+if reset
+    perMs := 0.0
+perMs += barMs
+
 bool  thin     = minVolIn > 0.0 and barVol < minVolIn
 float rollDeg  = math.sum(degraded ? 1.0 : 0.0, rollLen)
 float rollThin = math.sum(thin ? 1.0 : 0.0, rollLen)
@@ -278,7 +285,9 @@ if showTbl and barstate.islast
     row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
     row(7, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
     row(8, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
-    row(9, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(10, "Volume floor",   minVolIn <= 0.0 ? "off" : compact(minVolIn) + " — " + str.tostring(thinBars) + " bars below", minVolIn > 0.0 and thinBars > 0 ? color.orange : color.new(color.gray, 10))
+    float spanDays = (rolling ? rollMs : perMs) / 86400000.0
+    string spanTxt = spanDays >= 1.0 ? str.tostring(spanDays, "#.#") + "d" : str.tostring(spanDays * 24.0, "#.#") + "h"
+    row(9, "Window",          str.tostring(useBars) + " bars ≈ " + spanTxt + " / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(10, "Volume floor",   (minVolIn <= 0.0 ? "off" : compact(minVolIn) + ", " + str.tostring(thinBars) + " below") + "  (bar: " + compact(barVol) + ")", minVolIn > 0.0 and thinBars > 0 ? color.orange : color.new(color.gray, 10))
     row(11, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
     row(12, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
