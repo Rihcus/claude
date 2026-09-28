@@ -4,6 +4,30 @@
 bounded `[-1, +1]` read on how one-sided the traded volume has been since the
 anchor (session / day / week / month, or running).
 
+## Modes
+
+`Mode` picks a preset, because Pine cannot write values back into its own inputs:
+the preset supplies the effective settings and the manual inputs are simply not
+consulted unless the mode is `Custom`.
+
+| | Swing (tuned) | Scalping |
+|---|---|---|
+| Ladder cap | 60 → 5m rung | 5000 → finest rung (1s up to a 1h chart) |
+| Coverage | ~17 months on NQ | ~28 trading hours |
+| Anchor | rolling 126 bars | rolling 60 bars |
+| Samples per reading | ~5,800 at 4h | ~3,600 on a 1m chart |
+| Forming bar | live | frozen |
+| Blanking / bar guard | on / 3 | on / 3 |
+
+A preset drives only the horizon settings: ladder cap, 1s permission, anchor,
+window length, bar guard, blanking and the forming-bar freeze. Classification
+method, volume floor, threshold and smoothing stay manual in every mode, because
+they depend on the instrument and on taste rather than on the horizon — a volume
+floor in particular cannot be preset, since it is an absolute figure specific to
+one symbol and timeframe.
+
+Input groups are labelled `Custom only` where a preset overrides them.
+
 ## Why the timeframe ladder
 
 Delta is not available directly, it is reconstructed by classifying **intrabars**

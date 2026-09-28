@@ -16,11 +16,15 @@
 indicator("Cumulative Delta / Volume Ratio (1s ladder)", "CVD/Vol", overlay = false, precision = 3)
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
+string modeIn = input.string("Swing (tuned)", "Mode", options = ["Swing (tuned)", "Scalping", "Custom (use inputs below)"],
+     group = "Preset",
+     tooltip = "Swing: the 4h configuration — 5m rung (~17 months on NQ), rolling 126 bars (~1 month).\nScalping: finest rung available, which is 1s on any chart up to 1h (~28 trading hours), rolling 60 bars, forming bar frozen.\nCustom: use the inputs below.\n\nA preset drives the horizon settings: ladder cap, 1s permission, anchor, window length, bar guard, blanking and the forming-bar freeze. Classification, volume floor, threshold and smoothing stay manual under every mode, because they depend on the instrument and on taste rather than on the horizon.")
+
 string anchorIn = input.string("Week", "Reset cumulation on",
-     options = ["Session (regular)", "Day", "Week", "Month", "Rolling window (bars)", "None (running)"], group = "Cumulation",
+     options = ["Session (regular)", "Day", "Week", "Month", "Rolling window (bars)", "None (running)"], group = "Cumulation · Custom only",
      tooltip = "A calendar anchor must be COARSER than the chart timeframe, and coarse enough that the period holds a useful number of bars. On a 4h chart Day gives only 6 bars, so prefer Week, Month, or the rolling window.")
 
-int rollLen = input.int(42, "Rolling window length (bars)", minval = 2, maxval = 5000, group = "Cumulation",
+int rollLen = input.int(42, "Rolling window length (bars)", minval = 2, maxval = 5000, group = "Cumulation · Custom only",
      tooltip = "Used when anchor = Rolling window. No sawtooth at period boundaries and the denominator stays constant, so sensitivity does not decay.\n\nOn a 4h chart of CME futures (~6 bars/day, ~30/week, ~1510/year): 30 = a week, 126 = a month, 390 = a quarter, 1510 = a year. On a 24/7 instrument a week is 42.\n\nPlottable history = intrabar coverage minus this length, so a long window eats into how much clean output you can see.")
 
 string methodIn = input.string("Tick rule (close vs prev close)", "Intrabar classification",
@@ -28,31 +32,45 @@ string methodIn = input.string("Tick rule (close vs prev close)", "Intrabar clas
      group = "Delta",
      tooltip = "Tick rule: sign of close-to-close change of each intrabar (falls back to polarity, then to range position, when flat).\nPolarity: close vs open of the intrabar.\nProportional: volume split by where the close sits inside the intrabar range.")
 
-bool allowSec = input.bool(true, "Allow 1-second intrabars", group = "Resolution ladder",
+bool allowSec = input.bool(true, "Allow 1-second intrabars", group = "Resolution ladder · Custom only",
      tooltip = "Requires a plan with 1s data. Turn off to start the ladder at 1m.")
 
 int capIn = input.int(600, "Max intrabars per chart bar", minval = 4, maxval = 5000, step = 50,
-     group = "Resolution ladder",
+     group = "Resolution ladder · Custom only",
      tooltip = "The budget that decides how far up the ladder to climb. Higher = finer delta but less history, because request.security_lower_tf() returns at most ~100,000 intrabars in total (covered bars ≈ 100000 / intrabars-per-bar).")
 
-int minBars = input.int(3, "Min bars before plotting", minval = 1, maxval = 500, group = "Sample-size guard",
+int minBars = input.int(3, "Min bars before plotting", minval = 1, maxval = 500, group = "Sample-size guard · Custom only",
      tooltip = "Right after an anchor reset the ratio is computed from one or two bars, so it swings to extremes — that is arithmetic, not order flow. The plot stays blank until this many CHART BARS have accumulated in the current period. Counted in bars, not intrabars, so the guard behaves the same on a fine rung as on a coarse one.")
 
-float minVolIn = input.float(0.0, "Min bar volume (0 = off)", minval = 0.0, group = "Sample-size guard",
+float minVolIn = input.float(0.0, "Min bar volume (0 = off)", minval = 0.0, group = "Instrument · always active",
      tooltip = "Blanks bars whose volume falls below this. Meant for single futures contracts, which carry months of thin back-month history before they become front month — that flow is largely calendar-spread activity, not directional, so a delta read on it is noise. Compare against the window volume in the table to pick a level.")
 
-bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", group = "Sample-size guard",
+bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", group = "Sample-size guard · Custom only",
      tooltip = "Where the chosen rung has no history, a bar is signed as a single sample, which forces |delta| = volume and pins the ratio at ±1. Leave on to blank those bars and shade them instead of printing a fake extreme.")
 
-bool resetOnSrc = input.bool(true, "Reset cumulation when the intrabar source changes", group = "Sample-size guard",
+bool resetOnSrc = input.bool(true, "Reset cumulation when the intrabar source changes", group = "Sample-size guard · Custom only",
      tooltip = "A rung switch mid-period mixes two different delta magnitudes in one cumulative sum. Resetting at the boundary keeps each drawn segment internally consistent.")
 
-bool confirmOnly = input.bool(false, "Freeze the forming bar", group = "Display",
+bool confirmOnly = input.bool(false, "Freeze the forming bar (Custom only)", group = "Display",
      tooltip = "The live bar's intrabars arrive continuously, so its value moves for the whole bar. On a 4h chart that is slow enough to read; when scalping it flickers under you. With this on, the forming bar holds the last closed bar's value and snaps to its own only at the close — history is untouched either way, and alerts stop retriggering mid-bar.")
 
 int   smoothIn = input.int(0, "EMA smoothing (0 = off)", minval = 0, maxval = 200, group = "Display")
 float thrIn    = input.float(0.25, "Imbalance threshold", minval = 0.0, maxval = 1.0, step = 0.05, group = "Display")
 bool  showTbl  = input.bool(true, "Show diagnostics table", group = "Display")
+
+// ── Preset resolution ────────────────────────────────────────────────────────
+// Pine cannot write back into its own inputs, so a preset supplies the effective
+// values and the manual inputs are simply not consulted unless the mode is Custom.
+simple bool isCustom = modeIn == "Custom (use inputs below)"
+simple bool isScalp  = modeIn == "Scalping"
+
+simple int    capEff     = isCustom ? capIn        : isScalp ? 5000 : 60
+simple bool   secEff     = isCustom ? allowSec     : true
+simple string anchorEff  = isCustom ? anchorIn     : "Rolling window (bars)"
+simple int    rollEff    = isCustom ? rollLen      : isScalp ? 60 : 126
+simple int    minBarsEff = isCustom ? minBars      : 3
+simple bool   hideEff    = isCustom ? hideDegraded : true
+simple bool   freezeEff  = isCustom ? confirmOnly  : isScalp
 
 // ── Ladder selection ─────────────────────────────────────────────────────────
 // Walks 1s → 1m → 5m → 15m → 1h → 4h → 1d and returns the first step that is
@@ -92,7 +110,7 @@ ladderNext(simple string tf) =>
     nx
 
 simple int    chartSec = timeframe.in_seconds(timeframe.period)
-simple string ltf1     = ladderPick(chartSec, capIn, allowSec)
+simple string ltf1     = ladderPick(chartSec, capEff, secEff)
 simple int    ltf1Sec  = timeframe.in_seconds(ltf1)
 simple string ltf2Raw  = ladderNext(ltf1)
 simple bool   useLtf2  = timeframe.in_seconds(ltf2Raw) < chartSec
@@ -147,15 +165,15 @@ else
     srcCode  := 3
 
 // ── Cumulate and ratio ───────────────────────────────────────────────────────
-bool reset = switch anchorIn
+bool reset = switch anchorEff
     "Session (regular)" => session.isfirstbar_regular
     "Day"               => timeframe.change("1D")
     "Week"              => timeframe.change("1W")
     "Month"             => timeframe.change("1M")
     => false
 
-simple bool rolling  = anchorIn == "Rolling window (bars)"
-simple int  anchorSec = anchorIn == "Week" ? 604800 : anchorIn == "Month" ? 2592000 : (anchorIn == "None (running)" or rolling) ? 0 : 86400
+simple bool rolling  = anchorEff == "Rolling window (bars)"
+simple int  anchorSec = anchorEff == "Week" ? 604800 : anchorEff == "Month" ? 2592000 : (anchorEff == "None (running)" or rolling) ? 0 : 86400
 simple bool anchorTooFine = anchorSec > 0 and chartSec >= anchorSec
 
 bool degraded = srcCode != 1
@@ -195,25 +213,25 @@ if srcCode == 2
         firstFbTime := time
 
 // Rolling sums are stateful, so they run unconditionally even when unused.
-float rollD = math.sum(barDelta, rollLen)
-float rollV = math.sum(barVol, rollLen)
-float rollN = math.sum(nIntra, rollLen)
+float rollD = math.sum(barDelta, rollEff)
+float rollV = math.sum(barVol, rollEff)
+float rollN = math.sum(nIntra, rollEff)
 float barMs   = nz(time - time[1], 0)
-float rollMs  = math.sum(barMs, rollLen)
+float rollMs  = math.sum(barMs, rollEff)
 var float perMs = 0.0
 if reset
     perMs := 0.0
 perMs += barMs
 
 bool  thin     = minVolIn > 0.0 and barVol < minVolIn
-float rollDeg  = math.sum(degraded ? 1.0 : 0.0, rollLen)
-float rollThin = math.sum(thin ? 1.0 : 0.0, rollLen)
-float rollFlip = math.sum(srcFlip ? 1.0 : 0.0, rollLen)
+float rollDeg  = math.sum(degraded ? 1.0 : 0.0, rollEff)
+float rollThin = math.sum(thin ? 1.0 : 0.0, rollEff)
+float rollFlip = math.sum(srcFlip ? 1.0 : 0.0, rollEff)
 
 float useD = rolling ? rollD : cumD
 float useV = rolling ? rollV : cumV
-int   useN    = rolling ? (bar_index >= rollLen - 1 ? int(rollN) : 0) : cumN
-int   useBars = rolling ? (bar_index >= rollLen - 1 ? rollLen : 0) : cumBars
+int   useN    = rolling ? (bar_index >= rollEff - 1 ? int(rollN) : 0) : cumN
+int   useBars = rolling ? (bar_index >= rollEff - 1 ? rollEff : 0) : cumBars
 
 float ratio = useV > 0.0 ? useD / useV : 0.0          // bounded in [-1, +1]
 
@@ -221,11 +239,11 @@ float ratio = useV > 0.0 ? useD / useV : 0.0          // bounded in [-1, +1]
 float smoothed = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
 bool  mixedWin = rolling and rollFlip > 0.0     // window spans a rung change
 bool  dirty    = degraded or thin or (rolling and (rollDeg > 0.0 or rollThin > 0.0)) or mixedWin
-bool  trusted  = useBars >= minBars and not (hideDegraded and dirty)
+bool  trusted  = useBars >= minBarsEff and not (hideEff and dirty)
 float plotted  = trusted ? smoothed : na
 
 // Hold the forming bar at the last closed value so it cannot flicker mid-bar.
-if confirmOnly and barstate.isrealtime and not barstate.isconfirmed
+if freezeEff and barstate.isrealtime and not barstate.isconfirmed
     plotted := nz(plotted[1], plotted)
 
 // How much continuously plottable history the current cap/window actually yields.
@@ -251,7 +269,7 @@ hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linest
 // Amber = coarser fallback rung, deeper orange = bar-level estimate only.
 // The two are not interchangeable: coarser samples cancel less, so |delta| per
 // bar runs systematically higher and the ratio's amplitude is inflated.
-bgcolor(thin or (rolling and rollThin > 0.0) ? color.new(color.red, 90) : srcCode == 2 ? color.new(color.yellow, 90) : srcCode == 3 ? color.new(color.orange, 84) : mixedWin ? color.new(color.purple, 88) : useBars < minBars ? color.new(color.gray, 92) : na,
+bgcolor(thin or (rolling and rollThin > 0.0) ? color.new(color.red, 90) : srcCode == 2 ? color.new(color.yellow, 90) : srcCode == 3 ? color.new(color.orange, 84) : mixedWin ? color.new(color.purple, 88) : useBars < minBarsEff ? color.new(color.gray, 92) : na,
      title = "Intrabar regime / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
 plot(useN,   "Intrabars in window", display = display.data_window)
@@ -265,7 +283,7 @@ alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-
 alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 13, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 14, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -283,18 +301,19 @@ row(int r, string k, string v, color c) =>
 if showTbl and barstate.islast
     string usedTf = srcCode == 1 ? ltf1 : srcCode == 2 ? ltf2 : timeframe.period
     string srcTxt = srcCode == 1 ? "ladder rung" : srcCode == 2 ? "fallback rung (finer data missing)" : "chart bar (no intrabars)"
-    row(0, "Chart TF",        timeframe.period,                                     color.new(color.gray, 10))
-    row(1, "Intrabar TF",     usedTf,                                               srcCode == 1 ? color.teal : color.orange)
-    row(2, "Source",          srcTxt,                                               srcCode == 1 ? color.teal : color.orange)
-    row(3, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capIn) + ")", nIntra <= capIn ? color.new(color.gray, 10) : color.orange)
-    row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
-    row(5, "Anchor",          rolling ? "rolling " + str.tostring(rollLen) + " bars" : anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
-    row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
-    row(7, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
-    row(8, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
+    row(0, "Mode",            modeIn + (isCustom ? "" : " (preset)"),               isCustom ? color.new(color.gray, 10) : color.teal)
+    row(1, "Chart TF",        timeframe.period,                                     color.new(color.gray, 10))
+    row(2, "Intrabar TF",     usedTf,                                               srcCode == 1 ? color.teal : color.orange)
+    row(3, "Source",          srcTxt,                                               srcCode == 1 ? color.teal : color.orange)
+    row(4, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capEff) + ")", nIntra <= capEff ? color.new(color.gray, 10) : color.orange)
+    row(5, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
+    row(6, "Anchor",          rolling ? "rolling " + str.tostring(rollEff) + " bars" : anchorEff + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
+    row(7, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
+    row(8, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
+    row(9, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
     float spanDays = (rolling ? rollMs : perMs) / 86400000.0
     string spanTxt = spanDays >= 1.0 ? str.tostring(spanDays, "#.#") + "d" : str.tostring(spanDays * 24.0, "#.#") + "h"
-    row(9, "Window",          str.tostring(useBars) + " bars ≈ " + spanTxt + " / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(10, "Volume floor",   (minVolIn <= 0.0 ? "off" : compact(minVolIn) + ", " + str.tostring(thinBars) + " below") + "  (bar: " + compact(barVol) + ")", minVolIn > 0.0 and thinBars > 0 ? color.orange : color.new(color.gray, 10))
-    row(11, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
-    row(12, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(10, "Window",          str.tostring(useBars) + " bars ≈ " + spanTxt + " / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(11, "Volume floor",   (minVolIn <= 0.0 ? "off" : compact(minVolIn) + ", " + str.tostring(thinBars) + " below") + "  (bar: " + compact(barVol) + ")", minVolIn > 0.0 and thinBars > 0 ? color.orange : color.new(color.gray, 10))
+    row(12, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
+    row(13, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
