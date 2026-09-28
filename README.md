@@ -14,10 +14,17 @@ consulted unless the mode is `Custom`.
 |---|---|---|
 | Ladder cap | 60 → 5m rung | 5000 → finest rung (1s up to a 1h chart) |
 | Coverage | ~17 months on NQ | ~28 trading hours |
-| Anchor | rolling 126 bars | rolling 60 bars |
-| Samples per reading | ~5,800 at 4h | ~3,600 on a 1m chart |
+| Anchor | rolling 126 bars | rolling one trading hour |
+| Samples per reading | ~5,800 at 4h | ~3,600 on any chart |
 | Forming bar | live | frozen |
 | Blanking / bar guard | on / 3 | on / 3 |
+
+The scalping window is set in time rather than bars — 60 bars at 1m, 12 at 5m, 4
+at 15m. Since samples per reading is window span over rung duration, all three are
+the same ~3,600-sample measurement; only the plot's granularity differs. Picking a
+chart timeframe for scalping is therefore a question of how finely you want the
+line drawn, not of data quality. Swing stays at 126 bars because it is the tuned
+4h configuration; on another timeframe use Custom.
 
 A preset drives only the horizon settings: ladder cap, 1s permission, anchor,
 window length, bar guard, blanking and the forming-bar freeze. Classification

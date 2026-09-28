@@ -18,7 +18,7 @@ indicator("Cumulative Delta / Volume Ratio (1s ladder)", "CVD/Vol", overlay = fa
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string modeIn = input.string("Swing (tuned)", "Mode", options = ["Swing (tuned)", "Scalping", "Custom (use inputs below)"],
      group = "Preset",
-     tooltip = "Swing: the 4h configuration — 5m rung (~17 months on NQ), rolling 126 bars (~1 month).\nScalping: finest rung available, which is 1s on any chart up to 1h (~28 trading hours), rolling 60 bars, forming bar frozen.\nCustom: use the inputs below.\n\nA preset drives the horizon settings: ladder cap, 1s permission, anchor, window length, bar guard, blanking and the forming-bar freeze. Classification, volume floor, threshold and smoothing stay manual under every mode, because they depend on the instrument and on taste rather than on the horizon.")
+     tooltip = "Swing: the 4h configuration — 5m rung (~17 months on NQ), rolling 126 bars (~1 month).\nScalping: finest rung available, which is 1s on any chart up to 1h (~28 trading hours), a rolling window of one trading hour (60 bars at 1m, 12 at 5m), forming bar frozen. The window is set in time, not bars, so 1m and 5m give the same measurement drawn at different granularity.\nCustom: use the inputs below.\n\nA preset drives the horizon settings: ladder cap, 1s permission, anchor, window length, bar guard, blanking and the forming-bar freeze. Classification, volume floor, threshold and smoothing stay manual under every mode, because they depend on the instrument and on taste rather than on the horizon.")
 
 string anchorIn = input.string("Week", "Reset cumulation on",
      options = ["Session (regular)", "Day", "Week", "Month", "Rolling window (bars)", "None (running)"], group = "Cumulation · Custom only",
@@ -63,11 +63,18 @@ bool  showTbl  = input.bool(true, "Show diagnostics table", group = "Display")
 // values and the manual inputs are simply not consulted unless the mode is Custom.
 simple bool isCustom = modeIn == "Custom (use inputs below)"
 simple bool isScalp  = modeIn == "Scalping"
+simple int  chartSec = timeframe.in_seconds(timeframe.period)
+
+// The scalping window is fixed at one hour of trading, not at a bar count: the
+// ratio depends on window span over rung, so an hour of 1s intrabars is the same
+// ~3,600 samples whether it is drawn as 60 one-minute bars or 12 five-minute
+// ones. Only the plot's granularity differs.
+simple int scalpWin = math.max(2, int(math.round(3600.0 / math.max(chartSec, 1))))
 
 simple int    capEff     = isCustom ? capIn        : isScalp ? 5000 : 60
 simple bool   secEff     = isCustom ? allowSec     : true
 simple string anchorEff  = isCustom ? anchorIn     : "Rolling window (bars)"
-simple int    rollEff    = isCustom ? rollLen      : isScalp ? 60 : 126
+simple int    rollEff    = isCustom ? rollLen      : isScalp ? scalpWin : 126
 simple int    minBarsEff = isCustom ? minBars      : 3
 simple bool   hideEff    = isCustom ? hideDegraded : true
 simple bool   freezeEff  = isCustom ? confirmOnly  : isScalp
@@ -109,7 +116,6 @@ ladderNext(simple string tf) =>
         => "1D"
     nx
 
-simple int    chartSec = timeframe.in_seconds(timeframe.period)
 simple string ltf1     = ladderPick(chartSec, capEff, secEff)
 simple int    ltf1Sec  = timeframe.in_seconds(ltf1)
 simple string ltf2Raw  = ladderNext(ltf1)
