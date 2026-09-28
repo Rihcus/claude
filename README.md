@@ -57,6 +57,36 @@ None of these is true bid/ask delta — that needs tick data TradingView does no
 expose to Pine. At 1s the approximation is close; treat coarser rungs as
 directional, not exact.
 
+## Why the ratio used to pin at ±1
+
+`ratio = cumDelta / cumVolume` reaches exactly ±1 only when every sample in the
+anchor period is signed the same way **and** each sample's `|delta|` equals its
+full volume. Two places in the original code guaranteed that, and both cluster at
+the point where intrabar history runs out — which is exactly where the rung
+switch happens:
+
+1. **Single fully-signed sample.** On the last-resort fallback the chart bar was
+   signed by polarity, so `delta = ±volume` by construction. One such bar is
+   enough for `|ratio| = 1`.
+2. **No sample-size floor.** On the first bar after each anchor reset, `cumVolume`
+   is one bar of volume, so the cumulative ratio *is* that bar's ratio. Combined
+   with (1) it prints a clean ±1 spike at every reset in the degraded region.
+
+Three changes remove it:
+
+- The chart-bar fallback is now **always** a proportional split of the bar's
+  range, never a full sign, so a single sample can no longer contribute
+  `|delta| = volume` unless the bar closes exactly on its extreme.
+- `Min intrabars before plotting` (default 30) blanks the plot until the period
+  has enough samples for the ratio to mean anything.
+- `Blank out bars with no intrabar data` blanks and shades any bar not served by
+  the chosen rung, so the switch point is visible as a gap instead of a spike.
+  `Reset cumulation when the intrabar source changes` keeps one cumulative sum
+  from mixing two rungs' delta magnitudes.
+
+Orange shading = no intrabar data for those bars. Grey shading = warming up after
+an anchor reset. Alerts fire off the gated series, so they stay silent in both.
+
 ## Notes
 
 - The realtime bar's intrabars update live, so the last value repaints until the

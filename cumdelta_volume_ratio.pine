@@ -31,6 +31,15 @@ int capIn = input.int(600, "Max intrabars per chart bar", minval = 4, maxval = 5
      group = "Resolution ladder",
      tooltip = "The budget that decides how far up the ladder to climb. Higher = finer delta but less history, because request.security_lower_tf() returns at most ~100,000 intrabars in total (covered bars ≈ 100000 / intrabars-per-bar).")
 
+int minSamples = input.int(30, "Min intrabars before plotting", minval = 1, maxval = 5000, group = "Sample-size guard",
+     tooltip = "Right after an anchor reset the ratio is computed from one or two bars, so it pins to ±1 — that is arithmetic, not order flow. The plot stays blank until this many intrabars have accumulated in the current anchor period.")
+
+bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", group = "Sample-size guard",
+     tooltip = "Where the chosen rung has no history, a bar is signed as a single sample, which forces |delta| = volume and pins the ratio at ±1. Leave on to blank those bars and shade them instead of printing a fake extreme.")
+
+bool resetOnSrc = input.bool(true, "Reset cumulation when the intrabar source changes", group = "Sample-size guard",
+     tooltip = "A rung switch mid-period mixes two different delta magnitudes in one cumulative sum. Resetting at the boundary keeps each drawn segment internally consistent.")
+
 int   smoothIn = input.int(0, "EMA smoothing (0 = off)", minval = 0, maxval = 200, group = "Display")
 float thrIn    = input.float(0.25, "Imbalance threshold", minval = 0.0, maxval = 1.0, step = 0.05, group = "Display")
 bool  showTbl  = input.bool(true, "Show diagnostics table", group = "Display")
@@ -98,15 +107,12 @@ signedVol(simple int m) =>
 [dA1, vA1] = request.security_lower_tf(syminfo.tickerid, ltf1, [signedVol(methodCode), nz(volume)], ignore_invalid_timeframe = true)
 [dA2, vA2] = request.security_lower_tf(syminfo.tickerid, ltf2, [signedVol(methodCode), nz(volume)], ignore_invalid_timeframe = true)
 
-// Same classification applied to the chart bar itself — last-resort fallback.
-float cRng  = high - low
-float cProp = cRng > 0 ? 2.0 * (close - low) / cRng - 1.0 : 0.0
-float cPol  = close > open ? 1.0 : close < open ? -1.0 : 0.0
-float cSgn  = switch methodCode
-    1 => cPol
-    2 => close > nz(close[1], open) ? 1.0 : close < nz(close[1], open) ? -1.0 : (cPol != 0.0 ? cPol : cProp)
-    => cProp
-float chartDelta = nz(volume) * cSgn
+// Last-resort fallback: the chart bar as a single sample. Deliberately ALWAYS
+// proportional, never fully signed — signing one sample sets |delta| = volume,
+// which pins the ratio at exactly ±1 and is what produced the spikes at the
+// edge of intrabar history.
+float cRng       = high - low
+float chartDelta = cRng > 0 ? nz(volume) * (2.0 * (close - low) / cRng - 1.0) : 0.0
 
 // ── Resolve this bar's delta from the best available source ──────────────────
 float barDelta = 0.0
@@ -138,16 +144,26 @@ bool reset = switch anchorIn
     "Month"             => timeframe.change("1M")
     => false
 
+bool degraded = srcCode != 1
+bool srcFlip  = not na(srcCode[1]) and srcCode != srcCode[1]
+
 var float cumD = 0.0
 var float cumV = 0.0
-if reset
+var int   cumN = 0                                    // intrabars accumulated in this period
+if reset or (resetOnSrc and srcFlip)
     cumD := 0.0
     cumV := 0.0
+    cumN := 0
 cumD += barDelta
 cumV += barVol
+cumN += nIntra
 
-float ratio  = cumV > 0.0 ? cumD / cumV : 0.0        // bounded in [-1, +1]
-float plotted = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
+float ratio = cumV > 0.0 ? cumD / cumV : 0.0          // bounded in [-1, +1]
+
+// Smooth the raw series, then mask: feeding na into ta.ema() poisons it for good.
+float smoothed = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
+bool  trusted  = cumN >= minSamples and not (hideDegraded and degraded)
+float plotted  = trusted ? smoothed : na
 
 // ── Plot ─────────────────────────────────────────────────────────────────────
 color col = plotted >= 0 ? color.new(color.teal, 0) : color.new(color.red, 0)
@@ -157,17 +173,21 @@ fill(p, z, color = color.new(plotted >= 0 ? color.teal : color.red, 82))
 hline(0.0, "Zero", color = color.new(color.gray, 40))
 hline(thrIn,  "Bid/ask imbalance +", color = color.new(color.teal, 55), linestyle = hline.style_dotted)
 hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linestyle = hline.style_dotted)
+bgcolor(degraded ? color.new(color.orange, 88) : cumN < minSamples ? color.new(color.gray, 92) : na,
+     title = "No intrabar data / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
+plot(cumN,   "Intrabars in period", display = display.data_window)
 plot(cumD,   "Cumulative delta",  display = display.data_window)
 plot(cumV,   "Cumulative volume", display = display.data_window)
 
-alertcondition(ta.crossover(ratio, 0.0),   "CVD ratio crossed above 0", "Cumulative delta turned net positive")
-alertcondition(ta.crossunder(ratio, 0.0),  "CVD ratio crossed below 0", "Cumulative delta turned net negative")
-alertcondition(ta.crossover(ratio, thrIn), "CVD ratio above threshold", "Buy-side imbalance")
-alertcondition(ta.crossunder(ratio, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
+// Alerts fire off the plotted (gated) series, so untrusted stretches stay silent.
+alertcondition(ta.crossover(plotted, 0.0),    "CVD ratio crossed above 0", "Cumulative delta turned net positive")
+alertcondition(ta.crossunder(plotted, 0.0),   "CVD ratio crossed below 0", "Cumulative delta turned net negative")
+alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-side imbalance")
+alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 7, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 8, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -191,4 +211,5 @@ if showTbl and barstate.islast
     row(3, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capIn) + ")", nIntra <= capIn ? color.new(color.gray, 10) : color.orange)
     row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
     row(5, "Anchor",          anchorIn + (reset ? " (reset here)" : ""),             color.new(color.gray, 10))
-    row(6, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(6, "Samples in period", str.tostring(cumN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(7, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
