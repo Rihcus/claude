@@ -1,0 +1,194 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  Cumulative Delta / Volume Ratio  —  intrabar resolution ladder
+//
+//  Delta is reconstructed from INTRABARS pulled with request.security_lower_tf().
+//  The finer the intrabar, the less the classification is distorted, so the
+//  script walks this ladder in order and takes the FIRST (finest) step that
+//  still fits inside the intrabar budget:
+//
+//        1s  →  1m  →  5m  →  15m  →  1h  →  4h  →  1d
+//
+//  Each step is an exact multiple of the previous one, so intrabars tile the
+//  parent bar without spillover. The chosen step, the intrabars-per-bar count
+//  and whether the tiling is exact are all reported in the diagnostics table.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Cumulative Delta / Volume Ratio (1s ladder)", "CVD/Vol", overlay = false, precision = 3)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+string anchorIn = input.string("Day", "Reset cumulation on",
+     options = ["Session (regular)", "Day", "Week", "Month", "None (running)"], group = "Cumulation")
+
+string methodIn = input.string("Tick rule (close vs prev close)", "Intrabar classification",
+     options = ["Tick rule (close vs prev close)", "Candle polarity (close vs open)", "Proportional (close position in range)"],
+     group = "Delta",
+     tooltip = "Tick rule: sign of close-to-close change of each intrabar (falls back to polarity, then to range position, when flat).\nPolarity: close vs open of the intrabar.\nProportional: volume split by where the close sits inside the intrabar range.")
+
+bool allowSec = input.bool(true, "Allow 1-second intrabars", group = "Resolution ladder",
+     tooltip = "Requires a plan with 1s data. Turn off to start the ladder at 1m.")
+
+int capIn = input.int(600, "Max intrabars per chart bar", minval = 4, maxval = 5000, step = 50,
+     group = "Resolution ladder",
+     tooltip = "The budget that decides how far up the ladder to climb. Higher = finer delta but less history, because request.security_lower_tf() returns at most ~100,000 intrabars in total (covered bars ≈ 100000 / intrabars-per-bar).")
+
+int   smoothIn = input.int(0, "EMA smoothing (0 = off)", minval = 0, maxval = 200, group = "Display")
+float thrIn    = input.float(0.25, "Imbalance threshold", minval = 0.0, maxval = 1.0, step = 0.05, group = "Display")
+bool  showTbl  = input.bool(true, "Show diagnostics table", group = "Display")
+
+// ── Ladder selection ─────────────────────────────────────────────────────────
+// Walks 1s → 1m → 5m → 15m → 1h → 4h → 1d and returns the first step that is
+// strictly below the chart timeframe AND fits the intrabar budget. If nothing
+// fits the budget, returns the coarsest step still below the chart timeframe.
+ladderPick(simple int cs, simple int cap, simple bool secOk) =>
+    simple string tf = switch
+        cs <= 1                                       => "1S"
+        secOk and cs > 1     and cs         <= cap    => "1S"
+        cs > 60              and cs / 60    <= cap    => "1"
+        cs > 300             and cs / 300   <= cap    => "5"
+        cs > 900             and cs / 900   <= cap    => "15"
+        cs > 3600            and cs / 3600  <= cap    => "60"
+        cs > 14400           and cs / 14400 <= cap    => "240"
+        cs > 86400           and cs / 86400 <= cap    => "1D"
+        // budget unreachable → coarsest rung below the chart timeframe
+        cs > 86400 => "1D"
+        cs > 14400 => "240"
+        cs > 3600  => "60"
+        cs > 900   => "15"
+        cs > 300   => "5"
+        cs > 60    => "1"
+        => "1S"
+    tf
+
+// One rung coarser — used as a runtime fallback when the finer rung has no
+// history for a given bar (typical for 1s data, which is only kept briefly).
+ladderNext(simple string tf) =>
+    simple string nx = switch tf
+        "1S"  => "1"
+        "1"   => "5"
+        "5"   => "15"
+        "15"  => "60"
+        "60"  => "240"
+        "240" => "1D"
+        => "1D"
+    nx
+
+simple int    chartSec = timeframe.in_seconds(timeframe.period)
+simple string ltf1     = ladderPick(chartSec, capIn, allowSec)
+simple int    ltf1Sec  = timeframe.in_seconds(ltf1)
+simple string ltf2Raw  = ladderNext(ltf1)
+simple bool   useLtf2  = timeframe.in_seconds(ltf2Raw) < chartSec
+simple string ltf2     = useLtf2 ? ltf2Raw : ltf1
+simple bool   exactFit = ltf1Sec < chartSec and chartSec % ltf1Sec == 0
+
+simple int methodCode = methodIn == "Candle polarity (close vs open)" ? 1 : methodIn == "Tick rule (close vs prev close)" ? 2 : 3
+
+// ── Per-intrabar signed volume ───────────────────────────────────────────────
+// Evaluated inside the lower-timeframe context, so close[1] is the previous
+// INTRABAR close (correct across parent-bar boundaries).
+signedVol(simple int m) =>
+    float rng  = high - low
+    float prop = rng > 0 ? 2.0 * (close - low) / rng - 1.0 : 0.0
+    float pol  = close > open ? 1.0 : close < open ? -1.0 : 0.0
+    float sgn  = switch m
+        1 => pol
+        2 => close > close[1] ? 1.0 : close < close[1] ? -1.0 : (pol != 0.0 ? pol : prop)
+        => prop
+    nz(volume) * sgn
+
+[dA1, vA1] = request.security_lower_tf(syminfo.tickerid, ltf1, [signedVol(methodCode), nz(volume)], ignore_invalid_timeframe = true)
+[dA2, vA2] = request.security_lower_tf(syminfo.tickerid, ltf2, [signedVol(methodCode), nz(volume)], ignore_invalid_timeframe = true)
+
+// Same classification applied to the chart bar itself — last-resort fallback.
+float cRng  = high - low
+float cProp = cRng > 0 ? 2.0 * (close - low) / cRng - 1.0 : 0.0
+float cPol  = close > open ? 1.0 : close < open ? -1.0 : 0.0
+float cSgn  = switch methodCode
+    1 => cPol
+    2 => close > nz(close[1], open) ? 1.0 : close < nz(close[1], open) ? -1.0 : (cPol != 0.0 ? cPol : cProp)
+    => cProp
+float chartDelta = nz(volume) * cSgn
+
+// ── Resolve this bar's delta from the best available source ──────────────────
+float barDelta = 0.0
+float barVol   = 0.0
+int   nIntra   = 0
+int   srcCode  = 0                                    // 1 = ladder rung, 2 = fallback rung, 3 = chart bar
+
+if array.size(dA1) > 0
+    barDelta := array.sum(dA1)
+    barVol   := array.sum(vA1)
+    nIntra   := array.size(dA1)
+    srcCode  := 1
+else if array.size(dA2) > 0
+    barDelta := array.sum(dA2)
+    barVol   := array.sum(vA2)
+    nIntra   := array.size(dA2)
+    srcCode  := 2
+else
+    barDelta := chartDelta
+    barVol   := nz(volume)
+    nIntra   := 1
+    srcCode  := 3
+
+// ── Cumulate and ratio ───────────────────────────────────────────────────────
+bool reset = switch anchorIn
+    "Session (regular)" => session.isfirstbar_regular
+    "Day"               => timeframe.change("1D")
+    "Week"              => timeframe.change("1W")
+    "Month"             => timeframe.change("1M")
+    => false
+
+var float cumD = 0.0
+var float cumV = 0.0
+if reset
+    cumD := 0.0
+    cumV := 0.0
+cumD += barDelta
+cumV += barVol
+
+float ratio  = cumV > 0.0 ? cumD / cumV : 0.0        // bounded in [-1, +1]
+float plotted = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
+
+// ── Plot ─────────────────────────────────────────────────────────────────────
+color col = plotted >= 0 ? color.new(color.teal, 0) : color.new(color.red, 0)
+p = plot(plotted, "CumDelta / Volume", color = col, linewidth = 2)
+z = plot(0.0, "Zero", display = display.none)
+fill(p, z, color = color.new(plotted >= 0 ? color.teal : color.red, 82))
+hline(0.0, "Zero", color = color.new(color.gray, 40))
+hline(thrIn,  "Bid/ask imbalance +", color = color.new(color.teal, 55), linestyle = hline.style_dotted)
+hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linestyle = hline.style_dotted)
+plot(nIntra, "Intrabars per bar", display = display.data_window)
+plot(cumD,   "Cumulative delta",  display = display.data_window)
+plot(cumV,   "Cumulative volume", display = display.data_window)
+
+alertcondition(ta.crossover(ratio, 0.0),   "CVD ratio crossed above 0", "Cumulative delta turned net positive")
+alertcondition(ta.crossunder(ratio, 0.0),  "CVD ratio crossed below 0", "Cumulative delta turned net negative")
+alertcondition(ta.crossover(ratio, thrIn), "CVD ratio above threshold", "Buy-side imbalance")
+alertcondition(ta.crossunder(ratio, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────
+var table tbl = table.new(position.top_right, 2, 7, border_width = 1, frame_width = 1,
+     frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
+
+// Compact number formatter for the table (1.23M, 456.7k, …).
+compact(float x) =>
+    float a = math.abs(x)
+    string out = a >= 1e9 ? str.tostring(x / 1e9, "#.##") + "B" : a >= 1e6 ? str.tostring(x / 1e6, "#.##") + "M" : a >= 1e3 ? str.tostring(x / 1e3, "#.#") + "k" : str.tostring(x, "#.##")
+    out
+
+row(int r, string k, string v, color c) =>
+    table.cell(tbl, 0, r, k, text_size = size.small, text_halign = text.align_left,
+         text_color = color.new(color.gray, 10), bgcolor = color.new(color.gray, 92))
+    table.cell(tbl, 1, r, v, text_size = size.small, text_halign = text.align_right,
+         text_color = c, bgcolor = color.new(color.gray, 92))
+
+if showTbl and barstate.islast
+    string usedTf = srcCode == 1 ? ltf1 : srcCode == 2 ? ltf2 : timeframe.period
+    string srcTxt = srcCode == 1 ? "ladder rung" : srcCode == 2 ? "fallback rung (finer data missing)" : "chart bar (no intrabars)"
+    row(0, "Chart TF",        timeframe.period,                                     color.new(color.gray, 10))
+    row(1, "Intrabar TF",     usedTf,                                               srcCode == 1 ? color.teal : color.orange)
+    row(2, "Source",          srcTxt,                                               srcCode == 1 ? color.teal : color.orange)
+    row(3, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capIn) + ")", nIntra <= capIn ? color.new(color.gray, 10) : color.orange)
+    row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
+    row(5, "Anchor",          anchorIn + (reset ? " (reset here)" : ""),             color.new(color.gray, 10))
+    row(6, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
