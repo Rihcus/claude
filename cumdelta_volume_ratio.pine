@@ -47,6 +47,9 @@ bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", gro
 bool resetOnSrc = input.bool(true, "Reset cumulation when the intrabar source changes", group = "Sample-size guard",
      tooltip = "A rung switch mid-period mixes two different delta magnitudes in one cumulative sum. Resetting at the boundary keeps each drawn segment internally consistent.")
 
+bool confirmOnly = input.bool(false, "Freeze the forming bar", group = "Display",
+     tooltip = "The live bar's intrabars arrive continuously, so its value moves for the whole bar. On a 4h chart that is slow enough to read; when scalping it flickers under you. With this on, the forming bar holds the last closed bar's value and snaps to its own only at the close — history is untouched either way, and alerts stop retriggering mid-bar.")
+
 int   smoothIn = input.int(0, "EMA smoothing (0 = off)", minval = 0, maxval = 200, group = "Display")
 float thrIn    = input.float(0.25, "Imbalance threshold", minval = 0.0, maxval = 1.0, step = 0.05, group = "Display")
 bool  showTbl  = input.bool(true, "Show diagnostics table", group = "Display")
@@ -220,6 +223,10 @@ bool  mixedWin = rolling and rollFlip > 0.0     // window spans a rung change
 bool  dirty    = degraded or thin or (rolling and (rollDeg > 0.0 or rollThin > 0.0)) or mixedWin
 bool  trusted  = useBars >= minBars and not (hideDegraded and dirty)
 float plotted  = trusted ? smoothed : na
+
+// Hold the forming bar at the last closed value so it cannot flicker mid-bar.
+if confirmOnly and barstate.isrealtime and not barstate.isconfirmed
+    plotted := nz(plotted[1], plotted)
 
 // How much continuously plottable history the current cap/window actually yields.
 var int thinBars = 0

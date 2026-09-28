@@ -214,6 +214,41 @@ set the floor well below that — an order of magnitude separates front-month fr
 back-month volume, so the exact figure does not matter much. Failing bars are
 shaded red, and in rolling mode they invalidate any window containing them.
 
+## Scalping on a low timeframe
+
+Two invariants make the settings easy to carry down:
+
+- **Coverage = 100,000 x rung duration**, independent of chart timeframe.
+- **Samples per reading = window span / rung duration**, also independent of it.
+
+Chart timeframe only controls how finely the line is drawn. So the 1s rung gives
+~28 trading hours of history on any chart — about a day and a half on NQ — which
+is all a scalper needs, and it is the least distorted reconstruction available.
+
+| Setting | Scalping value | Why |
+|---|---|---|
+| Max intrabars per chart bar | **5000** | Always takes the finest rung available: 1s on any chart up to 1h |
+| Allow 1-second intrabars | **on** | Inert at 4h, the whole point here |
+| Reset cumulation on | Rolling, or `Session (regular)` | Rolling for a responsive read, session for "net flow since the open" |
+| Rolling window length | **60 bars on 1m** (1 hour) | 3,600 samples per reading at the 1s rung |
+| Min bar volume | ~50 on 1m NQ | Cuts the dead overnight bars, where delta means nothing |
+| Freeze the forming bar | **on** | See below |
+| Imbalance threshold | retune by eye | Shorter window swings wider |
+
+A one-hour window at the 1s rung carries ~3,600 samples, against ~5,800 for the
+4h/126-bar setup. Comparable statistical weight over 1/126th of the span — that
+is what the fine rung buys.
+
+**Repainting stops being academic here.** The live bar's intrabars arrive
+continuously, so its value moves for the whole bar. Over 4h that is a slow drift;
+over 1m it flickers under a decision. `Freeze the forming bar` holds the last
+closed value until the bar completes, which also stops alerts retriggering
+mid-bar. History is never affected either way.
+
+Rescale the volume floor when you move down: an NQ 1m bar is ~170 contracts
+against ~40k at 4h, so a floor tuned at 4h blanks the entire chart. The table
+shows the current bar's volume next to the floor for exactly this reason.
+
 ## Notes
 
 - The realtime bar's intrabars update live, so the last value repaints until the
