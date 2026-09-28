@@ -87,6 +87,37 @@ Three changes remove it:
 Orange shading = no intrabar data for those bars. Grey shading = warming up after
 an anchor reset. Alerts fire off the gated series, so they stay silent in both.
 
+## Why the plot starts partway into history
+
+`request.security_lower_tf()` serves roughly 100,000 intrabars in total, counted
+back from the right edge, so coverage in chart bars is about
+`100000 / intrabars-per-bar`. Older bars come back with empty arrays — there is no
+intrabar data there, so there is no delta to compute, and with
+`Blank out bars with no intrabar data` on (the default) the line simply stops.
+That boundary is the same place the ±1 spikes used to print.
+
+The table's **Intrabar data from** row gives the exact date the coverage starts and
+how many bars it spans, and **Budget** shows the estimate for the current rung. If
+the price chart has bars before that date but the indicator does not, this is why —
+not a plan history limit.
+
+Levers, in order of usefulness:
+
+1. **Lower `Max intrabars per chart bar`.** This climbs the ladder to a coarser
+   rung, which covers far more history. On a daily chart, cap 600 picks 5m
+   (288/bar, ~350 bars); cap 100 picks 1h (24/bar, ~4,100 bars). You trade
+   classification precision for reach.
+2. **Uncheck `Blank out bars with no intrabar data`.** Older bars then plot from
+   the coarser fallback rung, or from the bar-level proportional estimate, shaded
+   orange so you can see it is an estimate. It no longer pins at ±1.
+3. **Expect 1s coverage to be short.** Second-based history is retained for far
+   less time than the intrabar budget implies, so if the ladder picked 1s, coverage
+   is days-to-weeks regardless of the cap.
+
+Also watch the **Anchor** row: an anchor no coarser than the chart timeframe (e.g.
+`Day` on a daily chart) resets every bar, so the "cumulative" ratio collapses to a
+single bar's ratio. The table flags that in orange.
+
 ## Notes
 
 - The realtime bar's intrabars update live, so the last value repaints until the

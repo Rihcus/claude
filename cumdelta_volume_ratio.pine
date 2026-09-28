@@ -144,6 +144,9 @@ bool reset = switch anchorIn
     "Month"             => timeframe.change("1M")
     => false
 
+simple int anchorSec = anchorIn == "Week" ? 604800 : anchorIn == "Month" ? 2592000 : anchorIn == "None (running)" ? 0 : 86400
+simple bool anchorTooFine = anchorSec > 0 and chartSec >= anchorSec
+
 bool degraded = srcCode != 1
 bool srcFlip  = not na(srcCode[1]) and srcCode != srcCode[1]
 
@@ -157,6 +160,16 @@ if reset or (resetOnSrc and srcFlip)
 cumD += barDelta
 cumV += barVol
 cumN += nIntra
+
+// Where does intrabar coverage actually start? History is contiguous from the
+// right edge, so the first bar (chronologically) served by the chosen rung marks
+// the boundary of the ~100k intrabar budget.
+var int firstGoodTime = na
+var int goodBars      = 0
+if srcCode == 1
+    goodBars += 1
+    if na(firstGoodTime)
+        firstGoodTime := time
 
 float ratio = cumV > 0.0 ? cumD / cumV : 0.0          // bounded in [-1, +1]
 
@@ -187,7 +200,7 @@ alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-
 alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 8, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 10, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -210,6 +223,8 @@ if showTbl and barstate.islast
     row(2, "Source",          srcTxt,                                               srcCode == 1 ? color.teal : color.orange)
     row(3, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capIn) + ")", nIntra <= capIn ? color.new(color.gray, 10) : color.orange)
     row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
-    row(5, "Anchor",          anchorIn + (reset ? " (reset here)" : ""),             color.new(color.gray, 10))
-    row(6, "Samples in period", str.tostring(cumN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(7, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(5, "Anchor",          anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
+    row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
+    row(7, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
+    row(8, "Samples in period", str.tostring(cumN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(9, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
