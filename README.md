@@ -85,8 +85,16 @@ Three changes remove it:
   `Reset cumulation when the intrabar source changes` keeps one cumulative sum
   from mixing two rungs' delta magnitudes.
 
-Orange shading = no intrabar data for those bars. Grey shading = warming up after
-an anchor reset. Alerts fire off the gated series, so they stay silent in both.
+Shading: amber = served by the coarser fallback rung, deeper orange = bar-level
+estimate only, grey = warming up after an anchor reset. Alerts fire off the gated
+series, so they stay silent wherever the plot is blank.
+
+**Amplitude is not comparable across regimes.** A coarse sample signs its whole
+volume in one direction, so less cancels internally: 218 one-minute intrabars in a
+4h bar largely offset each other, while a single bar-level estimate cannot offset
+anything. The same order flow therefore reads as a larger |ratio| on a coarser
+rung. Do not compare swing sizes across a shading boundary — only within one
+regime.
 
 ## Why the plot starts partway into history
 
@@ -105,9 +113,18 @@ not a plan history limit.
 Levers, in order of usefulness:
 
 1. **Lower `Max intrabars per chart bar`.** This climbs the ladder to a coarser
-   rung, which covers far more history. On a daily chart, cap 600 picks 5m
-   (288/bar, ~350 bars); cap 100 picks 1h (24/bar, ~4,100 bars). You trade
-   classification precision for reach.
+   rung, which covers far more history. The tradeoff on a 4h chart:
+
+   | Cap | Rung | Intrabars/bar | Coverage |
+   |---|---|---|---|
+   | 600 | 1m  | ~218 | ~460 bars (~3.5 months) |
+   | 200 | 5m  | 48   | ~2,080 bars (~1 year) |
+   | 60  | 15m | 16   | ~6,250 bars (~2.8 years) |
+   | 20  | 1h  | 4    | beyond most chart history |
+
+   16 samples per bar is a far better estimate than the 1 you get from bar-level
+   fallback, so on a multi-year 4h chart a cap of 60 buys real reconstruction
+   across the whole visible range.
 2. **Uncheck `Blank out bars with no intrabar data`.** Older bars then plot from
    the coarser fallback rung, or from the bar-level proportional estimate, shaded
    orange so you can see it is an estimate. It no longer pins at ±1.

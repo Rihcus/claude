@@ -179,6 +179,15 @@ if srcCode == 1
     if na(firstGoodTime)
         firstGoodTime := time
 
+// History is processed left to right, so the first srcCode 2 bar marks where the
+// coarser fallback rung takes over from bar-level estimation.
+var int firstFbTime = na
+var int fbBars      = 0
+if srcCode == 2
+    fbBars += 1
+    if na(firstFbTime)
+        firstFbTime := time
+
 // Rolling sums are stateful, so they run unconditionally even when unused.
 float rollD = math.sum(barDelta, rollLen)
 float rollV = math.sum(barVol, rollLen)
@@ -206,8 +215,11 @@ fill(p, z, color = color.new(plotted >= 0 ? color.teal : color.red, 82))
 hline(0.0, "Zero", color = color.new(color.gray, 40))
 hline(thrIn,  "Bid/ask imbalance +", color = color.new(color.teal, 55), linestyle = hline.style_dotted)
 hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linestyle = hline.style_dotted)
-bgcolor(dirty ? color.new(color.orange, 88) : useBars < minBars ? color.new(color.gray, 92) : na,
-     title = "No intrabar data / warming up")
+// Amber = coarser fallback rung, deeper orange = bar-level estimate only.
+// The two are not interchangeable: coarser samples cancel less, so |delta| per
+// bar runs systematically higher and the ratio's amplitude is inflated.
+bgcolor(srcCode == 2 ? color.new(color.yellow, 90) : srcCode == 3 ? color.new(color.orange, 84) : useBars < minBars ? color.new(color.gray, 92) : na,
+     title = "Intrabar regime / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
 plot(useN,   "Intrabars in window", display = display.data_window)
 plot(useD,   "Delta (window)",  display = display.data_window)
@@ -220,7 +232,7 @@ alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-
 alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 10, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 11, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -245,6 +257,7 @@ if showTbl and barstate.islast
     row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
     row(5, "Anchor",          rolling ? "rolling " + str.tostring(rollLen) + " bars" : anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
     row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
-    row(7, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
-    row(8, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(9, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(7, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
+    row(8, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
+    row(9, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(10, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
