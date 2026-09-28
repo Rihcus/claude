@@ -12,19 +12,30 @@ consulted unless the mode is `Custom`.
 
 | | Swing (tuned) | Scalping |
 |---|---|---|
-| Ladder cap | 60 → 5m rung | 5000 → finest rung (1s up to a 1h chart) |
+| Rung | 5m on any chart | finest available (1s up to a 1h chart) |
 | Coverage | ~17 months on NQ | ~28 trading hours |
-| Anchor | rolling 126 bars | rolling one trading hour |
-| Samples per reading | ~5,800 at 4h | ~3,600 on any chart |
+| Window | one month of trading | one hour of trading |
+| Samples per reading | ~6,000 on any chart | ~3,600 on any chart |
 | Forming bar | live | frozen |
 | Blanking / bar guard | on / 3 | on / 3 |
 
-The scalping window is set in time rather than bars — 60 bars at 1m, 12 at 5m, 4
-at 15m. Since samples per reading is window span over rung duration, all three are
-the same ~3,600-sample measurement; only the plot's granularity differs. Picking a
-chart timeframe for scalping is therefore a question of how finely you want the
-line drawn, not of data quality. Swing stays at 126 bars because it is the tuned
-4h configuration; on another timeframe use Custom.
+Both presets are timeframe-portable: they pin a rung and a window *span*, not a
+cap and a bar count, so the measurement is identical across charts and only the
+plot's granularity changes. Picking a chart timeframe is therefore a question of
+how finely you want the line drawn, not of data quality.
+
+| Chart | Swing cap | Rung | Swing window | Samples |
+|---|---|---|---|---|
+| 15m | 3   | 5m | 2016 bars | 6,048 |
+| 1h  | 12  | 5m | 504 bars  | 6,048 |
+| 2h  | 24  | 5m | 252 bars  | 6,048 |
+| 4h  | 48  | 5m | 126 bars  | 6,048 |
+| 1D  | 288 | 5m | 21 bars   | 6,048 |
+
+The cap is derived as the 5m intrabar count for the chart timeframe, which admits
+5m and nothing finer, because 1m would need five times that. Scalping does the
+same with the finest rung and a one-hour window: 60 bars at 1m, 12 at 5m, 4 at
+15m, all ~3,600 samples.
 
 A preset drives only the horizon settings: ladder cap, 1s permission, anchor,
 window length, bar guard, blanking and the forming-bar freeze. Classification

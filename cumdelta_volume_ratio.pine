@@ -18,7 +18,7 @@ indicator("Cumulative Delta / Volume Ratio (1s ladder)", "CVD/Vol", overlay = fa
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string modeIn = input.string("Swing (tuned)", "Mode", options = ["Swing (tuned)", "Scalping", "Custom (use inputs below)"],
      group = "Preset",
-     tooltip = "Swing: the 4h configuration — 5m rung (~17 months on NQ), rolling 126 bars (~1 month).\nScalping: finest rung available, which is 1s on any chart up to 1h (~28 trading hours), a rolling window of one trading hour (60 bars at 1m, 12 at 5m), forming bar frozen. The window is set in time, not bars, so 1m and 5m give the same measurement drawn at different granularity.\nCustom: use the inputs below.\n\nA preset drives the horizon settings: ladder cap, 1s permission, anchor, window length, bar guard, blanking and the forming-bar freeze. Classification, volume floor, threshold and smoothing stay manual under every mode, because they depend on the instrument and on taste rather than on the horizon.")
+     tooltip = "Swing: the 4h configuration — 5m rung (~17 months on NQ) and a rolling month, both held constant across timeframes (126 bars at 4h, 504 at 1h, 21 at 1D).\nScalping: finest rung available, which is 1s on any chart up to 1h (~28 trading hours), a rolling window of one trading hour (60 bars at 1m, 12 at 5m), forming bar frozen. The window is set in time, not bars, so 1m and 5m give the same measurement drawn at different granularity.\nCustom: use the inputs below.\n\nA preset drives the horizon settings: ladder cap, 1s permission, anchor, window length, bar guard, blanking and the forming-bar freeze. Classification, volume floor, threshold and smoothing stay manual under every mode, because they depend on the instrument and on taste rather than on the horizon.")
 
 string anchorIn = input.string("Week", "Reset cumulation on",
      options = ["Session (regular)", "Day", "Week", "Month", "Rolling window (bars)", "None (running)"], group = "Cumulation · Custom only",
@@ -71,10 +71,19 @@ simple int  chartSec = timeframe.in_seconds(timeframe.period)
 // ones. Only the plot's granularity differs.
 simple int scalpWin = math.max(2, int(math.round(3600.0 / math.max(chartSec, 1))))
 
-simple int    capEff     = isCustom ? capIn        : isScalp ? 5000 : 60
+// Swing targets the 5m rung on any chart: a cap equal to the 5m intrabar count
+// admits 5m and nothing finer, since 1m would need five times that. Coverage is
+// then fixed by the rung at ~100,000 x 5min regardless of chart timeframe.
+simple int swingCap = math.max(2, chartSec / 300)
+
+// ...and one month of trading, defined as the 126 bars x 4h this was tuned on, so
+// the 4h setting is reproduced exactly and every other timeframe matches its span.
+simple int swingWin = math.min(5000, math.max(2, int(math.round(126.0 * 14400.0 / math.max(chartSec, 1)))))
+
+simple int    capEff     = isCustom ? capIn        : isScalp ? 5000 : swingCap
 simple bool   secEff     = isCustom ? allowSec     : true
 simple string anchorEff  = isCustom ? anchorIn     : "Rolling window (bars)"
-simple int    rollEff    = isCustom ? rollLen      : isScalp ? scalpWin : 126
+simple int    rollEff    = isCustom ? rollLen      : isScalp ? scalpWin : swingWin
 simple int    minBarsEff = isCustom ? minBars      : 3
 simple bool   hideEff    = isCustom ? hideDegraded : true
 simple bool   freezeEff  = isCustom ? confirmOnly  : isScalp
