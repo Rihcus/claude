@@ -21,7 +21,7 @@ string anchorIn = input.string("Week", "Reset cumulation on",
      tooltip = "A calendar anchor must be COARSER than the chart timeframe, and coarse enough that the period holds a useful number of bars. On a 4h chart Day gives only 6 bars, so prefer Week, Month, or the rolling window.")
 
 int rollLen = input.int(42, "Rolling window length (bars)", minval = 2, maxval = 5000, group = "Cumulation",
-     tooltip = "Used when anchor = Rolling window. No sawtooth at period boundaries and the denominator stays constant, so sensitivity does not decay. 42 bars = one week on a 24/7 4h chart; 30 on a session-based one.")
+     tooltip = "Used when anchor = Rolling window. No sawtooth at period boundaries and the denominator stays constant, so sensitivity does not decay.\n\nOn a 4h chart of CME futures (~6 bars/day, ~30/week, ~1510/year): 30 = a week, 126 = a month, 390 = a quarter, 1510 = a year. On a 24/7 instrument a week is 42.\n\nPlottable history = intrabar coverage minus this length, so a long window eats into how much clean output you can see.")
 
 string methodIn = input.string("Tick rule (close vs prev close)", "Intrabar classification",
      options = ["Tick rule (close vs prev close)", "Candle polarity (close vs open)", "Proportional (close position in range)"],
@@ -209,6 +209,14 @@ bool  dirty    = degraded or (rolling and rollDeg > 0.0) or mixedWin
 bool  trusted  = useBars >= minBars and not (hideDegraded and dirty)
 float plotted  = trusted ? smoothed : na
 
+// How much continuously plottable history the current cap/window actually yields.
+var int firstPlotTime = na
+var int plotBars      = 0
+if trusted
+    plotBars += 1
+    if na(firstPlotTime)
+        firstPlotTime := time
+
 // ── Plot ─────────────────────────────────────────────────────────────────────
 color col = plotted >= 0 ? color.new(color.teal, 0) : color.new(color.red, 0)
 p = plot(plotted, "CumDelta / Volume", color = col, linewidth = 2)
@@ -234,7 +242,7 @@ alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-
 alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 11, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 12, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -262,4 +270,5 @@ if showTbl and barstate.islast
     row(7, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
     row(8, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
     row(9, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(10, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(10, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
+    row(11, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
