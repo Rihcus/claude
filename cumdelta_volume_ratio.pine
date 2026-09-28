@@ -38,6 +38,9 @@ int capIn = input.int(600, "Max intrabars per chart bar", minval = 4, maxval = 5
 int minBars = input.int(3, "Min bars before plotting", minval = 1, maxval = 500, group = "Sample-size guard",
      tooltip = "Right after an anchor reset the ratio is computed from one or two bars, so it swings to extremes — that is arithmetic, not order flow. The plot stays blank until this many CHART BARS have accumulated in the current period. Counted in bars, not intrabars, so the guard behaves the same on a fine rung as on a coarse one.")
 
+float minVolIn = input.float(0.0, "Min bar volume (0 = off)", minval = 0.0, group = "Sample-size guard",
+     tooltip = "Blanks bars whose volume falls below this. Meant for single futures contracts, which carry months of thin back-month history before they become front month — that flow is largely calendar-spread activity, not directional, so a delta read on it is noise. Compare against the window volume in the table to pick a level.")
+
 bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", group = "Sample-size guard",
      tooltip = "Where the chosen rung has no history, a bar is signed as a single sample, which forces |delta| = volume and pins the ratio at ±1. Leave on to blank those bars and shade them instead of printing a fake extreme.")
 
@@ -192,7 +195,9 @@ if srcCode == 2
 float rollD = math.sum(barDelta, rollLen)
 float rollV = math.sum(barVol, rollLen)
 float rollN = math.sum(nIntra, rollLen)
+bool  thin     = minVolIn > 0.0 and barVol < minVolIn
 float rollDeg  = math.sum(degraded ? 1.0 : 0.0, rollLen)
+float rollThin = math.sum(thin ? 1.0 : 0.0, rollLen)
 float rollFlip = math.sum(srcFlip ? 1.0 : 0.0, rollLen)
 
 float useD = rolling ? rollD : cumD
@@ -205,11 +210,15 @@ float ratio = useV > 0.0 ? useD / useV : 0.0          // bounded in [-1, +1]
 // Smooth the raw series, then mask: feeding na into ta.ema() poisons it for good.
 float smoothed = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
 bool  mixedWin = rolling and rollFlip > 0.0     // window spans a rung change
-bool  dirty    = degraded or (rolling and rollDeg > 0.0) or mixedWin
+bool  dirty    = degraded or thin or (rolling and (rollDeg > 0.0 or rollThin > 0.0)) or mixedWin
 bool  trusted  = useBars >= minBars and not (hideDegraded and dirty)
 float plotted  = trusted ? smoothed : na
 
 // How much continuously plottable history the current cap/window actually yields.
+var int thinBars = 0
+if thin
+    thinBars += 1
+
 var int firstPlotTime = na
 var int plotBars      = 0
 if trusted
@@ -228,7 +237,7 @@ hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linest
 // Amber = coarser fallback rung, deeper orange = bar-level estimate only.
 // The two are not interchangeable: coarser samples cancel less, so |delta| per
 // bar runs systematically higher and the ratio's amplitude is inflated.
-bgcolor(srcCode == 2 ? color.new(color.yellow, 90) : srcCode == 3 ? color.new(color.orange, 84) : mixedWin ? color.new(color.purple, 88) : useBars < minBars ? color.new(color.gray, 92) : na,
+bgcolor(thin or (rolling and rollThin > 0.0) ? color.new(color.red, 90) : srcCode == 2 ? color.new(color.yellow, 90) : srcCode == 3 ? color.new(color.orange, 84) : mixedWin ? color.new(color.purple, 88) : useBars < minBars ? color.new(color.gray, 92) : na,
      title = "Intrabar regime / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
 plot(useN,   "Intrabars in window", display = display.data_window)
@@ -242,7 +251,7 @@ alertcondition(ta.crossover(plotted, thrIn),  "CVD ratio above threshold", "Buy-
 alertcondition(ta.crossunder(plotted, -thrIn), "CVD ratio below threshold", "Sell-side imbalance")
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
-var table tbl = table.new(position.top_right, 2, 12, border_width = 1, frame_width = 1,
+var table tbl = table.new(position.top_right, 2, 13, border_width = 1, frame_width = 1,
      frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 60))
 
 // Compact number formatter for the table (1.23M, 456.7k, …).
@@ -270,5 +279,6 @@ if showTbl and barstate.islast
     row(7, "Fallback rung",   na(firstFbTime) ? "unused" : ltf2 + " from " + str.format_time(firstFbTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(fbBars) + " bars)", na(firstFbTime) ? color.new(color.gray, 10) : color.orange)
     row(8, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
     row(9, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(10, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
-    row(11, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(10, "Volume floor",   minVolIn <= 0.0 ? "off" : compact(minVolIn) + " — " + str.tostring(thinBars) + " bars below", minVolIn > 0.0 and thinBars > 0 ? color.orange : color.new(color.gray, 10))
+    row(11, "Plot starts",    na(firstPlotTime) ? "nothing plotted" : str.format_time(firstPlotTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(plotBars) + " bars)", na(firstPlotTime) ? color.orange : color.teal)
+    row(12, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)

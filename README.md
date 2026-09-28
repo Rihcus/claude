@@ -188,6 +188,32 @@ on. With blanking off, that setting is doing more work, not less: without it a
 single period can sum fully-signed intrabar deltas and bar-level proportional
 estimates into one number, and the two are not on the same scale.
 
+## Continuous series vs a single futures contract
+
+Neither choice is free of distortion, and they fail in different ways.
+
+A continuous symbol (`NQ1!`) gives years of history but splices contracts four
+times a year. Around each roll, calendar-spread activity inflates volume without
+being directional, which dilutes the ratio toward zero for a week or two. The
+splice itself costs one misclassified sample out of several thousand, which is
+negligible.
+
+A single contract (`NQZ2026`) has no splice at all, but only about three months
+of front-month life. Everything before that is thin back-month trading dominated
+by calendar spreads — non-directional flow that a delta reconstruction reads as
+noise. That is a **worse** distortion than the roll it avoids, and it is easy to
+miss because the bars look normal.
+
+So: use the continuous symbol for a multi-month horizon and treat roll weeks with
+suspicion; use a single contract for a clean read over its liquid life. A single
+contract cannot give you a year of meaningful data, because it does not have one.
+
+`Min bar volume` blanks the thin stretch on a single contract. Read the window
+volume from the table, divide by the window length for an average per bar, and
+set the floor well below that — an order of magnitude separates front-month from
+back-month volume, so the exact figure does not matter much. Failing bars are
+shaded red, and in rolling mode they invalidate any window containing them.
+
 ## Notes
 
 - The realtime bar's intrabars update live, so the last value repaints until the
