@@ -16,8 +16,12 @@
 indicator("Cumulative Delta / Volume Ratio (1s ladder)", "CVD/Vol", overlay = false, precision = 3)
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
-string anchorIn = input.string("Day", "Reset cumulation on",
-     options = ["Session (regular)", "Day", "Week", "Month", "None (running)"], group = "Cumulation")
+string anchorIn = input.string("Week", "Reset cumulation on",
+     options = ["Session (regular)", "Day", "Week", "Month", "Rolling window (bars)", "None (running)"], group = "Cumulation",
+     tooltip = "A calendar anchor must be COARSER than the chart timeframe, and coarse enough that the period holds a useful number of bars. On a 4h chart Day gives only 6 bars, so prefer Week, Month, or the rolling window.")
+
+int rollLen = input.int(42, "Rolling window length (bars)", minval = 2, maxval = 5000, group = "Cumulation",
+     tooltip = "Used when anchor = Rolling window. No sawtooth at period boundaries and the denominator stays constant, so sensitivity does not decay. 42 bars = one week on a 24/7 4h chart; 30 on a session-based one.")
 
 string methodIn = input.string("Tick rule (close vs prev close)", "Intrabar classification",
      options = ["Tick rule (close vs prev close)", "Candle polarity (close vs open)", "Proportional (close position in range)"],
@@ -144,7 +148,8 @@ bool reset = switch anchorIn
     "Month"             => timeframe.change("1M")
     => false
 
-simple int anchorSec = anchorIn == "Week" ? 604800 : anchorIn == "Month" ? 2592000 : anchorIn == "None (running)" ? 0 : 86400
+simple bool rolling  = anchorIn == "Rolling window (bars)"
+simple int  anchorSec = anchorIn == "Week" ? 604800 : anchorIn == "Month" ? 2592000 : (anchorIn == "None (running)" or rolling) ? 0 : 86400
 simple bool anchorTooFine = anchorSec > 0 and chartSec >= anchorSec
 
 bool degraded = srcCode != 1
@@ -171,11 +176,22 @@ if srcCode == 1
     if na(firstGoodTime)
         firstGoodTime := time
 
-float ratio = cumV > 0.0 ? cumD / cumV : 0.0          // bounded in [-1, +1]
+// Rolling sums are stateful, so they run unconditionally even when unused.
+float rollD = math.sum(barDelta, rollLen)
+float rollV = math.sum(barVol, rollLen)
+float rollN = math.sum(nIntra, rollLen)
+float rollDeg = math.sum(degraded ? 1.0 : 0.0, rollLen)
+
+float useD = rolling ? rollD : cumD
+float useV = rolling ? rollV : cumV
+int   useN = rolling ? (bar_index >= rollLen - 1 ? int(rollN) : 0) : cumN
+
+float ratio = useV > 0.0 ? useD / useV : 0.0          // bounded in [-1, +1]
 
 // Smooth the raw series, then mask: feeding na into ta.ema() poisons it for good.
 float smoothed = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
-bool  trusted  = cumN >= minSamples and not (hideDegraded and degraded)
+bool  dirty    = degraded or (rolling and rollDeg > 0.0)
+bool  trusted  = useN >= minSamples and not (hideDegraded and dirty)
 float plotted  = trusted ? smoothed : na
 
 // ── Plot ─────────────────────────────────────────────────────────────────────
@@ -186,12 +202,12 @@ fill(p, z, color = color.new(plotted >= 0 ? color.teal : color.red, 82))
 hline(0.0, "Zero", color = color.new(color.gray, 40))
 hline(thrIn,  "Bid/ask imbalance +", color = color.new(color.teal, 55), linestyle = hline.style_dotted)
 hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linestyle = hline.style_dotted)
-bgcolor(degraded ? color.new(color.orange, 88) : cumN < minSamples ? color.new(color.gray, 92) : na,
+bgcolor(dirty ? color.new(color.orange, 88) : useN < minSamples ? color.new(color.gray, 92) : na,
      title = "No intrabar data / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
-plot(cumN,   "Intrabars in period", display = display.data_window)
-plot(cumD,   "Cumulative delta",  display = display.data_window)
-plot(cumV,   "Cumulative volume", display = display.data_window)
+plot(useN,   "Intrabars in window", display = display.data_window)
+plot(useD,   "Delta (window)",  display = display.data_window)
+plot(useV,   "Volume (window)", display = display.data_window)
 
 // Alerts fire off the plotted (gated) series, so untrusted stretches stay silent.
 alertcondition(ta.crossover(plotted, 0.0),    "CVD ratio crossed above 0", "Cumulative delta turned net positive")
@@ -223,8 +239,8 @@ if showTbl and barstate.islast
     row(2, "Source",          srcTxt,                                               srcCode == 1 ? color.teal : color.orange)
     row(3, "Intrabars / bar", str.tostring(nIntra) + " (cap " + str.tostring(capIn) + ")", nIntra <= capIn ? color.new(color.gray, 10) : color.orange)
     row(4, "Tiling",          exactFit ? "exact" : ltf1Sec >= chartSec ? "n/a" : "inexact — boundary bias", exactFit ? color.teal : color.orange)
-    row(5, "Anchor",          anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
+    row(5, "Anchor",          rolling ? "rolling " + str.tostring(rollLen) + " bars" : anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
     row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
     row(7, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
-    row(8, "Samples in period", str.tostring(cumN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
-    row(9, "Δ / Vol",         compact(cumD) + " / " + compact(cumV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)
+    row(8, "Samples in window", str.tostring(useN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(9, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)

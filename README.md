@@ -118,6 +118,44 @@ Also watch the **Anchor** row: an anchor no coarser than the chart timeframe (e.
 `Day` on a daily chart) resets every bar, so the "cumulative" ratio collapses to a
 single bar's ratio. The table flags that in orange.
 
+## Choosing the reset period
+
+The anchor has to be coarser than the chart timeframe, and coarse enough that a
+period holds enough bars for the ratio to mean something. Bars per period:
+
+| Chart TF | Day | Week (24/7) | Week (session) | Month (24/7) |
+|---|---|---|---|---|
+| 5m  | 288 | 2016 | 390 | 8640 |
+| 1h  | 24  | 168  | 32  | 720  |
+| 4h  | 6   | 42   | 30  | 180  |
+| 1D  | resets every bar | 7 | 5 | 30 |
+
+**On a 4h chart, `Day` is the wrong choice**: 6 samples per period means the first
+bar of each day *is* the whole ratio, and it takes three or four bars before the
+denominator carries any weight. You spend a sixth of the series looking at reset
+artifacts. `Session (regular)` is worse — on a 4h chart the regular-hours open
+generally falls inside a bar, so the reset lands on whichever bar happens to
+contain it.
+
+Use `Rolling window (bars)` at 42 (one week, 24/7) or 30 (session-based). It has
+no boundary discontinuity at all and its denominator is constant, so sensitivity
+stays flat instead of decaying. `Week` is the reasonable calendar-anchored
+alternative and is the default. `Month` (~180 bars) works for position context but
+is slow to turn.
+
+Avoid `None (running)` on any timeframe unless you specifically want it: the
+denominator grows without bound, so the ratio loses sensitivity bar by bar and
+converges to the whole-sample mean.
+
+One interaction to watch on 4h: at the default cap the ladder picks 1m (240
+intrabars/bar), which covers only ~410 bars ≈ 10 weeks — barely two `Month`
+periods. Dropping the cap to 200 moves it to the 5m rung (48/bar, ~2,000 bars ≈ a
+year) if you need a longer anchor to be usable.
+
+When rolling, a window containing any bar without intrabar data is treated as
+untrusted in full, not just the missing bars — a partial window would understate
+volume and inflate the ratio.
+
 ## Notes
 
 - The realtime bar's intrabars update live, so the last value repaints until the
