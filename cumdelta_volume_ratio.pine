@@ -35,8 +35,8 @@ int capIn = input.int(600, "Max intrabars per chart bar", minval = 4, maxval = 5
      group = "Resolution ladder",
      tooltip = "The budget that decides how far up the ladder to climb. Higher = finer delta but less history, because request.security_lower_tf() returns at most ~100,000 intrabars in total (covered bars ≈ 100000 / intrabars-per-bar).")
 
-int minSamples = input.int(30, "Min intrabars before plotting", minval = 1, maxval = 5000, group = "Sample-size guard",
-     tooltip = "Right after an anchor reset the ratio is computed from one or two bars, so it pins to ±1 — that is arithmetic, not order flow. The plot stays blank until this many intrabars have accumulated in the current anchor period.")
+int minBars = input.int(3, "Min bars before plotting", minval = 1, maxval = 500, group = "Sample-size guard",
+     tooltip = "Right after an anchor reset the ratio is computed from one or two bars, so it swings to extremes — that is arithmetic, not order flow. The plot stays blank until this many CHART BARS have accumulated in the current period. Counted in bars, not intrabars, so the guard behaves the same on a fine rung as on a coarse one.")
 
 bool hideDegraded = input.bool(true, "Blank out bars with no intrabar data", group = "Sample-size guard",
      tooltip = "Where the chosen rung has no history, a bar is signed as a single sample, which forces |delta| = volume and pins the ratio at ±1. Leave on to blank those bars and shade them instead of printing a fake extreme.")
@@ -158,13 +158,16 @@ bool srcFlip  = not na(srcCode[1]) and srcCode != srcCode[1]
 var float cumD = 0.0
 var float cumV = 0.0
 var int   cumN = 0                                    // intrabars accumulated in this period
+var int   cumBars = 0                                 // chart bars accumulated in this period
 if reset or (resetOnSrc and srcFlip)
     cumD := 0.0
     cumV := 0.0
     cumN := 0
+    cumBars := 0
 cumD += barDelta
 cumV += barVol
 cumN += nIntra
+cumBars += 1
 
 // Where does intrabar coverage actually start? History is contiguous from the
 // right edge, so the first bar (chronologically) served by the chosen rung marks
@@ -184,14 +187,15 @@ float rollDeg = math.sum(degraded ? 1.0 : 0.0, rollLen)
 
 float useD = rolling ? rollD : cumD
 float useV = rolling ? rollV : cumV
-int   useN = rolling ? (bar_index >= rollLen - 1 ? int(rollN) : 0) : cumN
+int   useN    = rolling ? (bar_index >= rollLen - 1 ? int(rollN) : 0) : cumN
+int   useBars = rolling ? (bar_index >= rollLen - 1 ? rollLen : 0) : cumBars
 
 float ratio = useV > 0.0 ? useD / useV : 0.0          // bounded in [-1, +1]
 
 // Smooth the raw series, then mask: feeding na into ta.ema() poisons it for good.
 float smoothed = smoothIn > 0 ? ta.ema(ratio, smoothIn) : ratio
 bool  dirty    = degraded or (rolling and rollDeg > 0.0)
-bool  trusted  = useN >= minSamples and not (hideDegraded and dirty)
+bool  trusted  = useBars >= minBars and not (hideDegraded and dirty)
 float plotted  = trusted ? smoothed : na
 
 // ── Plot ─────────────────────────────────────────────────────────────────────
@@ -202,7 +206,7 @@ fill(p, z, color = color.new(plotted >= 0 ? color.teal : color.red, 82))
 hline(0.0, "Zero", color = color.new(color.gray, 40))
 hline(thrIn,  "Bid/ask imbalance +", color = color.new(color.teal, 55), linestyle = hline.style_dotted)
 hline(-thrIn, "Bid/ask imbalance −", color = color.new(color.red,  55), linestyle = hline.style_dotted)
-bgcolor(dirty ? color.new(color.orange, 88) : useN < minSamples ? color.new(color.gray, 92) : na,
+bgcolor(dirty ? color.new(color.orange, 88) : useBars < minBars ? color.new(color.gray, 92) : na,
      title = "No intrabar data / warming up")
 plot(nIntra, "Intrabars per bar", display = display.data_window)
 plot(useN,   "Intrabars in window", display = display.data_window)
@@ -242,5 +246,5 @@ if showTbl and barstate.islast
     row(5, "Anchor",          rolling ? "rolling " + str.tostring(rollLen) + " bars" : anchorIn + (anchorTooFine ? " — resets EVERY bar (use a coarser anchor)" : reset ? " (reset here)" : ""), anchorTooFine ? color.orange : color.new(color.gray, 10))
     row(6, "Intrabar data from", na(firstGoodTime) ? "none on this chart" : str.format_time(firstGoodTime, "yyyy-MM-dd", syminfo.timezone) + "  (" + str.tostring(goodBars) + " bars)", na(firstGoodTime) ? color.orange : color.new(color.gray, 10))
     row(7, "Budget",          "~" + compact(100000.0 / math.max(nIntra, 1)) + " bars at " + str.tostring(nIntra) + " intrabars/bar", color.new(color.gray, 10))
-    row(8, "Samples in window", str.tostring(useN) + " / " + str.tostring(minSamples) + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
+    row(8, "Window",          str.tostring(useBars) + " bars / " + str.tostring(useN) + " intrabars" + (trusted ? "" : " — plot blank"), trusted ? color.new(color.gray, 10) : color.orange)
     row(9, "Δ / Vol",         compact(useD) + " / " + compact(useV) + " = " + str.tostring(ratio, "#.###"), ratio >= 0 ? color.teal : color.red)

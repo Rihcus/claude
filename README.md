@@ -77,8 +77,9 @@ Three changes remove it:
 - The chart-bar fallback is now **always** a proportional split of the bar's
   range, never a full sign, so a single sample can no longer contribute
   `|delta| = volume` unless the bar closes exactly on its extreme.
-- `Min intrabars before plotting` (default 30) blanks the plot until the period
-  has enough samples for the ratio to mean anything.
+- `Min bars before plotting` (default 3) blanks the plot until the period has
+  enough bars for the ratio to mean anything. It counts chart bars, not intrabars,
+  so the guard is equally strict on a fine rung and a coarse one.
 - `Blank out bars with no intrabar data` blanks and shades any bar not served by
   the chosen rung, so the switch point is visible as a gap instead of a spike.
   `Reset cumulation when the intrabar source changes` keeps one cumulative sum
@@ -155,6 +156,12 @@ year) if you need a longer anchor to be usable.
 When rolling, a window containing any bar without intrabar data is treated as
 untrusted in full, not just the missing bars — a partial window would understate
 volume and inflate the ratio.
+
+If you switch `Blank out bars with no intrabar data` off to see history past the
+coverage boundary, turn `Reset cumulation when the intrabar source changes` back
+on. With blanking off, that setting is doing more work, not less: without it a
+single period can sum fully-signed intrabar deltas and bar-level proportional
+estimates into one number, and the two are not on the same scale.
 
 ## Notes
 
